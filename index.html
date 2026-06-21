@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+<title>APM Command Center</title>
+
+<!-- Home screen / standalone app behavior -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="APM" />
+<meta name="theme-color" content="#0b0c0e" />
+<link rel="apple-touch-icon" href="icon-180.png" />
+<link rel="icon" href="icon-192.png" />
+<link rel="manifest" href="manifest.webmanifest" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet" />
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #0b0c0e; overscroll-behavior: none; }
+  * { box-sizing: border-box; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 8px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
+  ::-webkit-scrollbar-track { background: transparent; }
+  @keyframes pop { 0%{transform:scale(0.6);opacity:0} 60%{transform:scale(1.12)} 100%{transform:scale(1);opacity:1} }
+  @keyframes fadeUp { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+  @keyframes sheetIn { from{opacity:0;transform:translateY(12px) scale(0.98)} to{opacity:1;transform:translateY(0) scale(1)} }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.45} }
+  .cc-task { animation: fadeUp 0.18s ease both; }
+  .cc-tap { transition: background 0.14s ease, border-color 0.14s ease, transform 0.08s ease; -webkit-tap-highlight-color: transparent; }
+  .cc-tap:active { transform: scale(0.985); }
+  input, textarea, button { font-family: inherit; }
+  input:focus, textarea:focus { outline: none; }
+  #root { height: 100vh; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef } = React;
+
+const T = {
+  bg:"#0b0c0e", bg2:"#0e1012", surface:"#141619", surfaceHi:"#1a1d21",
+  line:"rgba(255,255,255,0.06)", lineHi:"rgba(255,255,255,0.11)",
+  text:"#f3f4f6", dim:"#9aa0aa", mute:"#5b616b", faint:"#3a3f47",
+  accent:"#ffb247", accentSoft:"rgba(255,178,71,0.13)", accentLine:"rgba(255,178,71,0.35)",
+  red:"#ff6b5e", redSoft:"rgba(255,107,94,0.13)", green:"#4ade80", greenSoft:"rgba(74,222,128,0.13)",
+};
+
+const PROJECTS = [
+  { id:"26007", code:"26007",  name:"Mercedes Beverly Hills", short:"MB Beverly Hills", phase:"Phase 2 TI", match:["beverly","26007","mb bh","mercedes beverly"] },
+  { id:"25014", code:"25014",  name:"Warner PDI",            short:"Warner PDI",        phase:"Irvine",     match:["warner","25014","pdi irvine"] },
+  { id:"25013", code:"25013",  name:"Newport Beach",         short:"Newport Beach",     phase:"Car Wash",   match:["newport","25013","car wash"] },
+  { id:"bmwsm", code:"BMW-SM", name:"BMW Santa Monica",      short:"BMW Santa Monica",  phase:"TI",         match:["bmw","santa monica","bmw sm"] },
+  { id:"ont",   code:"MB-ONT", name:"Mercedes Ontario",      short:"MB Ontario",        phase:"Trailer",    match:["ontario","trailer","mb ont"] },
+  { id:"plb",   code:"PCA-LB", name:"Porsche Long Beach",    short:"Porsche LB",        phase:"Fencing",    match:["porsche","long beach","fencing"] },
+  { id:"lcpdl", code:"LC-PDI", name:"La Cienega PDI",        short:"La Cienega",        phase:"PDI",        match:["cienega","la cienega"] },
+];
+const projById = (id) => PROJECTS.find(p => p.id === id);
+function detectProject(text){
+  const t = text.toLowerCase();
+  for (const p of PROJECTS){ if (p.match.some(m => t.includes(m))) return p.id; }
+  return null;
+}
+
+const COLS = [
+  { id:"today",      label:"Today",       hint:"Do it now",        hero:true  },
+  { id:"week",       label:"This Week",   hint:"Before Friday",    hero:false },
+  { id:"followup",   label:"Check On",    hint:"Waiting on reply", hero:false },
+  { id:"backburner", label:"Back Burner", hint:"Someday",          hero:false },
+];
+
+const STORE_KEY = "apm_cc_v3";
+const loadState = () => { try { return JSON.parse(localStorage.getItem(STORE_KEY)); } catch { return null; } };
+const saveState = (s) => { try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch {} };
+const uid = () => Math.random().toString(36).slice(2,9);
+
+function todayISO(){ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
+function addDays(n){ const d=new Date(); d.setDate(d.getDate()+n); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
+function nextFriday(){ const d=new Date(); const day=d.getDay(); const delta=(5-day+7)%7||7; return addDays(delta); }
+function relDate(iso){
+  if(!iso) return null;
+  const d=new Date(iso+"T00:00:00"); const now=new Date(todayISO()+"T00:00:00");
+  const diff=Math.round((d-now)/86400000);
+  if(diff<0) return {label:`${Math.abs(diff)}d late`, overdue:true};
+  if(diff===0) return {label:"Today", soon:true};
+  if(diff===1) return {label:"Tomorrow", soon:true};
+  if(diff<=6) return {label:d.toLocaleDateString("en-US",{weekday:"short"}), soon:diff<=2};
+  return {label:d.toLocaleDateString("en-US",{month:"short",day:"numeric"})};
+}
+
+/* ── ring ── */
+function Ring({pct,size=44}){
+  const r=(size-6)/2, c=2*Math.PI*r;
+  return (
+    <div style={{position:"relative",width:size,height:size}}>
+      <svg width={size} height={size} style={{transform:"rotate(-90deg)"}}>
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={T.line} strokeWidth="3.5"/>
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={T.accent} strokeWidth="3.5"
+          strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c*(1-pct)}
+          style={{transition:"stroke-dashoffset 0.5s cubic-bezier(.4,0,.2,1)"}}/>
+      </svg>
+      <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",
+        fontSize:11,fontWeight:600,fontFamily:"'Space Grotesk',sans-serif",color:pct>=1?T.accent:T.dim}}>
+        {Math.round(pct*100)}
+      </div>
+    </div>
+  );
+}
+
+function Clock(){
+  const [t,setT]=useState(new Date());
+  useEffect(()=>{ const i=setInterval(()=>setT(new Date()),1000); return ()=>clearInterval(i); },[]);
+  return (
+    <div style={{textAlign:"right",lineHeight:1.05}}>
+      <div style={{fontFamily:"'Space Grotesk',sans-serif",fontSize:30,fontWeight:600,color:T.text,letterSpacing:"-1px",fontVariantNumeric:"tabular-nums"}}>
+        {t.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",hour12:true}).toLowerCase()}
+      </div>
+    </div>
+  );
+}
+
+function TaskCard({task,onCheck,onOpen,onDragStart,hero}){
+  const proj=projById(task.project); const rel=relDate(task.dueDate);
+  return (
+    <div className="cc-task cc-tap" draggable onDragStart={(e)=>onDragStart(e,task.id)} onClick={()=>onOpen(task)}
+      style={{display:"flex",gap:11,alignItems:"flex-start",padding:hero?"13px 14px":"11px 13px",
+        background:task.done?"transparent":T.surface,border:`1px solid ${task.done?"transparent":T.line}`,
+        borderRadius:12,marginBottom:7,cursor:"pointer",opacity:task.done?0.4:1}}>
+      <button onClick={(e)=>{e.stopPropagation();onCheck(task.id);}} className="cc-tap"
+        style={{width:20,height:20,borderRadius:7,flexShrink:0,marginTop:1,
+          border:`1.5px solid ${task.done?T.green:T.faint}`,background:task.done?T.green:"transparent",
+          display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",padding:0}}>
+        {task.done && <span style={{color:"#06210f",fontSize:12,fontWeight:800,animation:"pop 0.25s ease"}}>✓</span>}
+      </button>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontSize:hero?15:14,fontWeight:450,lineHeight:1.38,
+          color:task.done?T.mute:T.text,textDecoration:task.done?"line-through":"none"}}>{task.text}</div>
+        {(proj||rel) && (
+          <div style={{display:"flex",gap:7,marginTop:7,alignItems:"center",flexWrap:"wrap"}}>
+            {proj && <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10.5,fontWeight:600,letterSpacing:"0.4px",
+              color:T.dim,background:T.bg2,border:`1px solid ${T.line}`,borderRadius:5,padding:"2px 6px"}}>{proj.code}</span>}
+            {rel && <span style={{fontSize:10.5,fontWeight:600,borderRadius:5,padding:"2px 7px",
+              color:rel.overdue?T.red:rel.soon?T.accent:T.dim,
+              background:rel.overdue?T.redSoft:rel.soon?T.accentSoft:T.bg2,
+              animation:rel.overdue?"pulse 2s ease-in-out infinite":"none"}}>{rel.overdue?"⚠ ":""}{rel.label}</span>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Column({col,tasks,onCheck,onOpen,onDragStart,onDropTo,onAdd}){
+  const [over,setOver]=useState(false);
+  const [adding,setAdding]=useState(false);
+  const [val,setVal]=useState("");
+  const open=tasks.filter(t=>!t.done); const done=tasks.filter(t=>t.done);
+  const commit=()=>{ const v=val.trim(); if(v) onAdd(col.id,v); setVal(""); setAdding(false); };
+  return (
+    <div onDragOver={(e)=>{e.preventDefault();setOver(true);}} onDragLeave={()=>setOver(false)}
+      onDrop={(e)=>{e.preventDefault();setOver(false);onDropTo(col.id);}}
+      style={{display:"flex",flexDirection:"column",minWidth:0,height:"100%",borderRadius:16,
+        padding:over?9:0,margin:over?-9:0,background:over?T.accentSoft:"transparent",
+        outline:over?`1.5px dashed ${T.accentLine}`:"none",transition:"background 0.15s ease"}}>
+      <div style={{display:"flex",alignItems:"baseline",gap:9,marginBottom:14,paddingLeft:2}}>
+        {col.hero && <span style={{width:7,height:7,borderRadius:2,background:T.accent,boxShadow:`0 0 10px ${T.accent}`,alignSelf:"center"}}/>}
+        <span style={{fontFamily:"'Space Grotesk',sans-serif",fontSize:col.hero?19:16,fontWeight:600,
+          color:col.hero?T.text:T.dim,letterSpacing:"-0.3px"}}>{col.label}</span>
+        <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:12,color:T.mute,marginLeft:"auto"}}>{open.length||""}</span>
+      </div>
+      <div style={{flex:1,overflowY:"auto",paddingRight:2,marginRight:-2}}>
+        {open.length===0 && done.length===0 && !adding &&
+          <div style={{fontSize:13,color:T.faint,padding:"2px 2px 10px",fontStyle:"italic"}}>{col.hero?"Clear. Nice.":col.hint}</div>}
+        {open.map(t=><TaskCard key={t.id} task={t} hero={col.hero} onCheck={onCheck} onOpen={onOpen} onDragStart={onDragStart}/>)}
+        {done.map(t=><TaskCard key={t.id} task={t} hero={col.hero} onCheck={onCheck} onOpen={onOpen} onDragStart={onDragStart}/>)}
+        {adding ? (
+          <input autoFocus value={val} onChange={(e)=>setVal(e.target.value)}
+            onKeyDown={(e)=>{if(e.key==="Enter")commit();if(e.key==="Escape"){setAdding(false);setVal("");}}}
+            onBlur={commit} placeholder="What needs doing?"
+            style={{width:"100%",background:T.bg2,border:`1.5px solid ${T.accentLine}`,color:T.text,borderRadius:10,padding:"10px 12px",fontSize:14}}/>
+        ) : (
+          <button onClick={()=>setAdding(true)} className="cc-tap"
+            style={{display:"flex",alignItems:"center",gap:7,width:"100%",background:"transparent",
+              border:`1px dashed ${T.line}`,color:T.mute,borderRadius:10,padding:"9px 12px",fontSize:13,cursor:"pointer",marginTop:2}}>
+            <span style={{fontSize:16,lineHeight:1,marginTop:-1}}>+</span> Add
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const inp={width:"100%",background:T.bg2,border:`1px solid ${T.lineHi}`,color:T.text,borderRadius:9,padding:"8px 11px",fontSize:13};
+const miniPrimary={flex:1,background:T.accent,color:"#1a1206",border:"none",borderRadius:8,padding:"7px",fontSize:12.5,fontWeight:700,cursor:"pointer"};
+const miniGhost={flex:1,background:T.surfaceHi,color:T.dim,border:`1px solid ${T.line}`,borderRadius:8,padding:"7px",fontSize:12.5,cursor:"pointer"};
+
+function Panel({title,action,children}){
+  return (
+    <div style={{background:T.bg2,border:`1px solid ${T.line}`,borderRadius:15,padding:"13px 15px"}}>
+      <div style={{display:"flex",alignItems:"center",marginBottom:9}}>
+        <span style={{fontFamily:"'Space Grotesk',sans-serif",fontSize:13,fontWeight:600,color:T.dim,letterSpacing:"0.2px",textTransform:"uppercase",flex:1}}>{title}</span>
+        {action}
+      </div>
+      {children}
+    </div>
+  );
+}
+function Row({children,onRemove}){
+  return (
+    <div style={{display:"flex",alignItems:"center",gap:9,padding:"6px 0",borderBottom:`1px solid ${T.line}`}}>
+      {children}
+      {onRemove && <button onClick={onRemove} className="cc-tap" style={{marginLeft:"auto",background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,padding:0}}>×</button>}
+    </div>
+  );
+}
+const Empty=({children})=> <div style={{fontSize:12.5,color:T.faint,fontStyle:"italic",padding:"2px 0 4px"}}>{children}</div>;
+const Chip=({children,color,bg})=> <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10.5,fontWeight:700,color,background:bg,borderRadius:5,padding:"1px 6px"}}>{children}</span>;
+const AddBtn=({onClick})=> <button onClick={onClick} className="cc-tap" style={{background:T.surfaceHi,border:`1px solid ${T.line}`,color:T.dim,width:24,height:24,borderRadius:7,cursor:"pointer",fontSize:15,lineHeight:1,padding:0}}>+</button>;
+
+function Rail({tasks,events,onAddEvent,onRemoveEvent}){
+  const [adding,setAdding]=useState(false);
+  const [d,setD]=useState({title:"",time:""});
+  const dated=tasks.filter(t=>t.dueDate&&!t.done).sort((a,b)=>a.dueDate.localeCompare(b.dueDate)).slice(0,6);
+  const submit=()=>{ if(d.title.trim()){ onAddEvent({...d,id:uid()}); setD({title:"",time:""}); setAdding(false);} };
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:12,height:"100%",overflowY:"auto",paddingRight:2}}>
+      <Panel title="Schedule" action={<AddBtn onClick={()=>setAdding(true)}/>}>
+        {events.length===0 && !adding && <Empty>No meetings today.</Empty>}
+        {events.map(ev=>(
+          <Row key={ev.id} onRemove={()=>onRemoveEvent(ev.id)}>
+            {ev.time && <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:11.5,color:T.accent,fontWeight:600,minWidth:46}}>{ev.time}</span>}
+            <span style={{fontSize:13,color:T.text,fontWeight:450}}>{ev.title}</span>
+          </Row>
+        ))}
+        {adding && (
+          <div style={{marginTop:6}}>
+            <input autoFocus value={d.title} onChange={(e)=>setD(s=>({...s,title:e.target.value}))} onKeyDown={(e)=>e.key==="Enter"&&submit()} placeholder="Meeting" style={inp}/>
+            <input value={d.time} onChange={(e)=>setD(s=>({...s,time:e.target.value}))} onKeyDown={(e)=>e.key==="Enter"&&submit()} placeholder="Time (10:30a)" style={{...inp,marginTop:5}}/>
+            <div style={{display:"flex",gap:6,marginTop:6}}>
+              <button onClick={submit} className="cc-tap" style={miniPrimary}>Add</button>
+              <button onClick={()=>setAdding(false)} className="cc-tap" style={miniGhost}>Cancel</button>
+            </div>
+          </div>
+        )}
+      </Panel>
+      <Panel title="Deadlines">
+        {dated.length===0 && <Empty>Nothing dated.</Empty>}
+        {dated.map(t=>{ const rel=relDate(t.dueDate); return (
+          <Row key={t.id}>
+            <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:11,fontWeight:600,minWidth:56,color:rel.overdue?T.red:T.accent}}>{rel.overdue?"⚠ ":""}{rel.label}</span>
+            <span style={{fontSize:12.5,color:T.dim,fontWeight:450}}>{t.text}</span>
+          </Row>
+        );})}
+      </Panel>
+      <Panel title="Projects">
+        {PROJECTS.map(p=>{
+          const o=tasks.filter(t=>t.project===p.id&&!t.done);
+          const overdue=o.filter(t=>t.dueDate&&relDate(t.dueDate)?.overdue).length;
+          const urgent=o.filter(t=>t.bucket==="today").length;
+          return (
+            <div key={p.id} style={{display:"flex",alignItems:"center",gap:9,padding:"7px 0",borderBottom:`1px solid ${T.line}`}}>
+              <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10.5,fontWeight:600,color:T.mute,minWidth:52}}>{p.code}</span>
+              <span style={{fontSize:12.5,color:T.dim,fontWeight:450,flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.short}</span>
+              {overdue>0 && <Chip color={T.red} bg={T.redSoft}>{overdue}!</Chip>}
+              {urgent>0 && <Chip color={T.accent} bg={T.accentSoft}>{urgent}</Chip>}
+              {o.length===0 ? <Chip color={T.green} bg={T.greenSoft}>✓</Chip> : <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:11,color:T.mute}}>{o.length}</span>}
+            </div>
+          );
+        })}
+      </Panel>
+    </div>
+  );
+}
+
+function ActionSheet({task,onClose,onMove,onDue,onEdit,onDelete}){
+  const [editing,setEditing]=useState(false);
+  const [text,setText]=useState(task.text);
+  if(!task) return null;
+  const proj=projById(task.project);
+  return (
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(4,5,6,0.6)",backdropFilter:"blur(3px)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div onClick={(e)=>e.stopPropagation()} style={{background:T.surface,border:`1px solid ${T.lineHi}`,borderRadius:18,padding:20,width:420,maxWidth:"100%",animation:"sheetIn 0.2s cubic-bezier(.2,.8,.2,1)",boxShadow:"0 24px 60px rgba(0,0,0,0.5)"}}>
+        {editing ? (
+          <textarea autoFocus value={text} onChange={(e)=>setText(e.target.value)} rows={2}
+            style={{width:"100%",background:T.bg2,border:`1.5px solid ${T.accentLine}`,color:T.text,borderRadius:10,padding:11,fontSize:15,resize:"none",lineHeight:1.4}}/>
+        ) : (
+          <div style={{fontSize:16,fontWeight:500,color:T.text,lineHeight:1.4}}>{task.text}</div>
+        )}
+        {proj && !editing && <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:11.5,color:T.mute,marginTop:8}}>{proj.code} · {proj.name}</div>}
+        <div style={{marginTop:16,marginBottom:6,fontSize:11.5,fontWeight:600,color:T.mute,textTransform:"uppercase",letterSpacing:"0.5px"}}>Move to</div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          {COLS.map(c=>(
+            <button key={c.id} onClick={()=>onMove(task.id,c.id)} className="cc-tap"
+              style={{flex:"1 1 calc(50% - 3px)",padding:"9px",borderRadius:9,cursor:"pointer",fontSize:12.5,fontWeight:600,
+                background:task.bucket===c.id?T.accentSoft:T.bg2,border:`1px solid ${task.bucket===c.id?T.accentLine:T.line}`,
+                color:task.bucket===c.id?T.accent:T.dim}}>{c.label}</button>
+          ))}
+        </div>
+        <div style={{marginTop:14,marginBottom:6,fontSize:11.5,fontWeight:600,color:T.mute,textTransform:"uppercase",letterSpacing:"0.5px"}}>Due</div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          {[["Today",todayISO()],["Tomorrow",addDays(1)],["Friday",nextFriday()],["Next wk",addDays(7)],["Clear",null]].map(([lbl,val])=>(
+            <button key={lbl} onClick={()=>onDue(task.id,val)} className="cc-tap"
+              style={{flex:"1 1 auto",padding:"8px 10px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600,
+                background:T.bg2,border:`1px solid ${T.line}`,color:lbl==="Clear"?T.mute:T.dim}}>{lbl}</button>
+          ))}
+        </div>
+        <div style={{display:"flex",gap:8,marginTop:18}}>
+          {editing ? (
+            <button onClick={()=>{onEdit(task.id,text.trim()||task.text);setEditing(false);}} className="cc-tap" style={{flex:1,...miniPrimary,padding:"10px"}}>Save</button>
+          ) : (
+            <button onClick={()=>setEditing(true)} className="cc-tap" style={{flex:1,background:T.surfaceHi,border:`1px solid ${T.lineHi}`,color:T.text,borderRadius:9,padding:"10px",fontSize:13,fontWeight:600,cursor:"pointer"}}>Edit</button>
+          )}
+          <button onClick={()=>onDelete(task.id)} className="cc-tap" style={{flex:1,background:T.redSoft,border:`1px solid ${T.red}33`,color:T.red,borderRadius:9,padding:"10px",fontSize:13,fontWeight:600,cursor:"pointer"}}>Delete</button>
+          <button onClick={onClose} className="cc-tap" style={{flex:1,background:"transparent",border:`1px solid ${T.line}`,color:T.dim,borderRadius:9,padding:"10px",fontSize:13,cursor:"pointer"}}>Done</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* Quick Capture: paste many lines, each becomes a task. Auto-detects project keywords. */
+function Capture({onImport}){
+  const [open,setOpen]=useState(false);
+  const [text,setText]=useState("");
+  const [bucket,setBucket]=useState("today");
+  const lines=text.split("\n").map(l=>l.trim()).filter(Boolean);
+  const reset=()=>{ setOpen(false); setText(""); setBucket("today"); };
+  const add=()=>{
+    const tasks=lines.map(l=>({id:uid(),text:l.replace(/^[-*•\d.)\s]+/,"").trim()||l,bucket,project:detectProject(l),dueDate:null,done:false}));
+    onImport(tasks); reset();
+  };
+  return (
+    <>
+      <button onClick={()=>setOpen(true)} className="cc-tap"
+        style={{display:"flex",alignItems:"center",gap:7,background:T.accent,color:"#1a1206",border:"none",borderRadius:11,padding:"10px 16px",fontSize:13.5,fontWeight:700,cursor:"pointer",boxShadow:`0 4px 16px ${T.accentSoft}`}}>
+        <span style={{fontSize:15}}>✦</span> Quick Capture
+      </button>
+      {open && (
+        <div onClick={(e)=>e.target===e.currentTarget&&reset()} style={{position:"fixed",inset:0,background:"rgba(4,5,6,0.65)",backdropFilter:"blur(4px)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div style={{background:T.surface,border:`1px solid ${T.lineHi}`,borderRadius:20,padding:24,width:560,maxWidth:"100%",maxHeight:"88vh",overflow:"auto",animation:"sheetIn 0.22s cubic-bezier(.2,.8,.2,1)",boxShadow:"0 30px 70px rgba(0,0,0,0.55)"}}>
+            <div style={{fontFamily:"'Space Grotesk',sans-serif",fontSize:19,fontWeight:600,color:T.text,letterSpacing:"-0.3px"}}>Quick Capture</div>
+            <div style={{fontSize:13,color:T.dim,marginTop:5,marginBottom:14,lineHeight:1.5}}>
+              Paste or type a list. Each line becomes a task. Project codes get matched automatically from keywords like "Warner" or "BMW".
+            </div>
+            <textarea value={text} onChange={(e)=>setText(e.target.value)} placeholder={"Submit SCE application for Ontario trailer\nChase Gensler on BMW SM downlight RFI\nReview Warner COR 09 pricing"}
+              style={{width:"100%",minHeight:160,background:T.bg2,border:`1px solid ${T.lineHi}`,color:T.text,borderRadius:12,padding:13,fontSize:13.5,resize:"vertical",lineHeight:1.6}}/>
+            <div style={{display:"flex",gap:6,marginTop:12,flexWrap:"wrap"}}>
+              <span style={{fontSize:12,color:T.mute,alignSelf:"center",marginRight:4}}>Into:</span>
+              {COLS.map(c=>(
+                <button key={c.id} onClick={()=>setBucket(c.id)} className="cc-tap"
+                  style={{padding:"7px 12px",borderRadius:9,cursor:"pointer",fontSize:12.5,fontWeight:600,
+                    background:bucket===c.id?T.accentSoft:T.bg2,border:`1px solid ${bucket===c.id?T.accentLine:T.line}`,color:bucket===c.id?T.accent:T.dim}}>{c.label}</button>
+              ))}
+            </div>
+            <div style={{display:"flex",gap:8,marginTop:16}}>
+              <button onClick={add} disabled={!lines.length} className="cc-tap"
+                style={{flex:2,background:lines.length?T.green:T.surfaceHi,color:lines.length?"#06210f":T.mute,border:"none",borderRadius:11,padding:"12px",fontSize:14,fontWeight:700,cursor:lines.length?"pointer":"default"}}>
+                Add {lines.length||""} {lines.length===1?"task":"tasks"}
+              </button>
+              <button onClick={reset} className="cc-tap" style={{flex:1,background:T.surfaceHi,color:T.dim,border:`1px solid ${T.line}`,borderRadius:11,padding:"12px",fontSize:13.5,cursor:"pointer"}}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function App(){
+  const init = loadState() || {};
+  const [tasks,setTasks]=useState(init.tasks||[]);
+  const [events,setEvents]=useState(init.events||[]);
+  const [sheet,setSheet]=useState(null);
+  const dragId=useRef(null);
+  const first=useRef(true);
+
+  useEffect(()=>{ if(first.current){first.current=false;return;} saveState({tasks,events}); },[tasks,events]);
+
+  const check=(id)=>setTasks(ts=>ts.map(t=>t.id===id?{...t,done:!t.done}:t));
+  const move=(id,bucket)=>{ setTasks(ts=>ts.map(t=>t.id===id?{...t,bucket}:t)); setSheet(s=>s&&s.id===id?{...s,bucket}:s); };
+  const setDue=(id,dueDate)=>{ setTasks(ts=>ts.map(t=>t.id===id?{...t,dueDate}:t)); setSheet(s=>s&&s.id===id?{...s,dueDate}:s); };
+  const edit=(id,text)=>{ setTasks(ts=>ts.map(t=>t.id===id?{...t,text}:t)); setSheet(s=>s&&s.id===id?{...s,text}:s); };
+  const del=(id)=>{ setTasks(ts=>ts.filter(t=>t.id!==id)); setSheet(null); };
+  const add=(bucket,text)=>setTasks(ts=>[...ts,{id:uid(),text,bucket,project:detectProject(text),dueDate:null,done:false}]);
+  const importTasks=(arr)=>setTasks(ts=>[...ts,...arr]);
+  const clearDone=()=>setTasks(ts=>ts.filter(t=>!t.done));
+  const onDragStart=(e,id)=>{ dragId.current=id; e.dataTransfer.effectAllowed="move"; };
+  const onDropTo=(bucket)=>{ if(dragId.current){ move(dragId.current,bucket); dragId.current=null; } };
+  const addEvent=(ev)=>setEvents(e=>[...e,ev]);
+  const removeEvent=(id)=>setEvents(e=>e.filter(x=>x.id!==id));
+
+  const todayTasks=tasks.filter(t=>t.bucket==="today");
+  const todayDone=todayTasks.filter(t=>t.done).length;
+  const pct=todayTasks.length?todayDone/todayTasks.length:0;
+  const doneCt=tasks.filter(t=>t.done).length;
+  const hour=new Date().getHours();
+  const greet=hour<12?"Good morning":hour<17?"Good afternoon":"Good evening";
+  const dateStr=new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});
+
+  return (
+    <div style={{height:"100vh",background:T.bg,color:T.text,fontFamily:"'Inter',-apple-system,sans-serif",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+      <div style={{height:2,background:`linear-gradient(90deg, transparent, ${T.accentLine}, transparent)`,flexShrink:0}}/>
+      <div style={{display:"flex",alignItems:"center",padding:"16px 26px 14px",gap:20,flexShrink:0}}>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontFamily:"'Space Grotesk',sans-serif",fontSize:22,fontWeight:600,letterSpacing:"-0.6px",color:T.text}}>
+            {greet}, Ben<span style={{color:T.accent}}>.</span>
+          </div>
+          <div style={{fontSize:12.5,color:T.mute,marginTop:2,fontFamily:"'JetBrains Mono',monospace",letterSpacing:"0.3px"}}>{dateStr.toUpperCase()}</div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:18}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <Ring pct={pct}/>
+            <div style={{lineHeight:1.2}}>
+              <div style={{fontSize:12,color:T.dim,fontWeight:500}}>Today</div>
+              <div style={{fontFamily:"'Space Grotesk',sans-serif",fontSize:14,fontWeight:600,color:T.text}}>{todayDone}/{todayTasks.length||0}</div>
+            </div>
+          </div>
+          {doneCt>0 && <button onClick={clearDone} className="cc-tap" style={{background:"transparent",border:`1px solid ${T.line}`,color:T.mute,borderRadius:9,padding:"8px 12px",fontSize:12,cursor:"pointer"}}>Clear {doneCt} done</button>}
+          <Capture onImport={importTasks}/>
+          <div style={{width:1,height:34,background:T.line}}/>
+          <Clock/>
+        </div>
+      </div>
+      <div style={{flex:1,minHeight:0,display:"grid",gridTemplateColumns:"1.45fr 1fr 1fr 1fr 0.95fr",gap:22,padding:"8px 26px 22px"}}>
+        {COLS.map(col=>(
+          <Column key={col.id} col={col} tasks={tasks.filter(t=>t.bucket===col.id)}
+            onCheck={check} onOpen={setSheet} onDragStart={onDragStart} onDropTo={onDropTo} onAdd={add}/>
+        ))}
+        <Rail tasks={tasks} events={events} onAddEvent={addEvent} onRemoveEvent={removeEvent}/>
+      </div>
+      {tasks.length===0 && (
+        <div style={{position:"fixed",bottom:24,left:0,right:0,textAlign:"center",fontSize:13,color:T.mute,pointerEvents:"none"}}>
+          Tap <span style={{color:T.accent,fontWeight:600}}>✦ Quick Capture</span> to paste your list in, or <span style={{color:T.dim}}>+ Add</span> in any column. Drag cards between columns. Tap a card for options.
+        </div>
+      )}
+      {sheet && <ActionSheet task={sheet} onClose={()=>setSheet(null)} onMove={move} onDue={setDue} onEdit={edit} onDelete={del}/>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
